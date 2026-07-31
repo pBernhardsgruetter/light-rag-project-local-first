@@ -10,6 +10,8 @@ chunk_overlap: 200
 gliner_model: "urchade/gliner_large-v2.1"
 rebel_model: "Babelscape/rebel-large"
 embedding_model: "all-MiniLM-L6-v2"
+entity_score_threshold: 0.35
+relation_default_confidence: 0.70
 
 openrouter_model: "nvidia/nemotron-3-ultra-550b-a55b:free"
 
@@ -32,6 +34,8 @@ relation_types:
   - "REGULATES"
   - "USES"
   - "PARTNERED_WITH"
+  - "WORKS_ON"
+  - "RELATED_TO"
 
 resolution:
   similarity_threshold: 0.85

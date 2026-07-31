@@ -35,9 +35,9 @@ class GraphRAGValidator:
                     cases.append(json.loads(line))
         return cases
 
-    async def llm_judge(self, question: str, expected: str, actual: str) -> float:
+    async def llm_judge(self, question: str, expected: str, actual: str):
         if not self.llm:
-            return 0.8  # Fallback score if no API key is available
+            return None
 
         prompt = f"""Bewerte die Qualität der erhaltenen Antwort im Vergleich zur erwarteten Antwort auf einer Skala von 0.0 bis 1.0.
 Frage: {question}
@@ -53,10 +53,11 @@ Antworte NUR mit einer Zahl zwischen 0.0 und 1.0."""
                 max_tokens=10
             )
             score_str = resp.choices[0].message.content.strip()
-            return float(score_str)
+            score = float(score_str)
+            return max(0.0, min(1.0, score))
         except Exception as e:
             print(f"LLM Judge evaluation failed: {e}")
-            return 0.5
+            return None
 
     async def validate_retrieval(self) -> dict:
         cases = self.load_test_cases()
@@ -70,14 +71,21 @@ Antworte NUR mit einer Zahl zwischen 0.0 und 1.0."""
             try:
                 res = requests.post(
                     f"{self.lightrag_endpoint}/query",
-                    json={"query": q, "mode": tc.get("mode", "hybrid")},
-                    timeout=10
+                    json={
+                        "query": q,
+                        "mode": tc.get("mode", "hybrid"),
+                        "top_k": tc.get("top_k", 10),
+                    },
+                    timeout=60,
                 )
                 if res.status_code == 200:
-                    actual = res.json().get("result", "")
+                    payload = res.json()
+                    actual = payload.get("result", "")
                 else:
+                    payload = {}
                     actual = f"Error: HTTP {res.status_code}"
             except Exception as ex:
+                payload = {}
                 actual = f"Connection Error: {ex}"
 
             score = await self.llm_judge(q, expected, actual)
@@ -85,15 +93,24 @@ Antworte NUR mit einer Zahl zwischen 0.0 und 1.0."""
                 "question": q,
                 "expected": expected,
                 "actual": actual,
-                "score": score
+                "score": score,
+                "citations": payload.get("citations", []),
+                "nodes": payload.get("nodes", []),
+                "edges": payload.get("edges", []),
             })
 
-        avg_score = sum(r["score"] for r in results) / len(results) if results else 0.0
-        status = "PASS" if avg_score >= self.target_score else "FAIL"
+        scored = [r["score"] for r in results if r["score"] is not None]
+        avg_score = sum(scored) / len(scored) if scored else None
+        if not results:
+            status = "NO_TEST_CASES"
+        elif not scored:
+            status = "NO_JUDGE"
+        else:
+            status = "PASS" if avg_score >= self.target_score else "FAIL"
 
         report = {
             "timestamp": datetime.utcnow().isoformat(),
-            "avg_score": round(avg_score, 4),
+            "avg_score": round(avg_score, 4) if avg_score is not None else None,
             "target_score": self.target_score,
             "status": status,
             "details": results

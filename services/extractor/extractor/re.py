@@ -7,20 +7,32 @@ except Exception:
     pass
 
 from typing import List, Dict, Any
+import torch
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from .chunking import TextChunk
+from .quality import normalize_relation_type
 
 class RelationExtractor:
-    def __init__(self, model_name: str, batch_size: int = 32):
+    def __init__(
+        self,
+        model_name: str,
+        batch_size: int = 32,
+        allowed_relation_types: List[str] = None,
+        default_confidence: float = 0.70,
+    ):
         self.model_name = model_name
         self.batch_size = batch_size
+        self.allowed_relation_types = allowed_relation_types or []
+        self.default_confidence = default_confidence
         self.tokenizer = None
         self.model = None
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     def _load_pipeline(self):
         if self.model is None:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
+            self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name).to(self.device)
+            self.model.eval()
 
     def _parse_rebel_output(self, text: str) -> List[Dict[str, str]]:
         triplets = []
@@ -75,19 +87,37 @@ class RelationExtractor:
             batch_texts = texts[i:i + self.batch_size]
             batch_chunks = chunks[i:i + self.batch_size]
             
-            inputs = self.tokenizer(batch_texts, return_tensors="pt", padding=True, truncation=True, max_length=512)
-            outputs = self.model.generate(**inputs, max_new_tokens=256, num_beams=3, do_sample=False)
+            inputs = self.tokenizer(
+                batch_texts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512,
+            )
+            inputs = {key: value.to(self.device) for key, value in inputs.items()}
+            with torch.inference_mode():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=256,
+                    num_beams=3,
+                    do_sample=False,
+                )
 
             for chunk, out in zip(batch_chunks, outputs):
                 gen_text = self.tokenizer.decode(out, skip_special_tokens=False)
                 parsed = self._parse_rebel_output(gen_text)
                 for rel in parsed:
+                    relation_type, raw_relation_type = normalize_relation_type(
+                        rel.get("relation", "RELATED_TO"),
+                        self.allowed_relation_types,
+                    )
                     results.append({
                         "chunk_id": chunk.id,
                         "source": rel["subject"],
                         "target": rel["object"],
-                        "type": rel["type"].upper().replace(" ", "_") if "type" in rel else rel["relation"].upper().replace(" ", "_"),
-                        "confidence": 0.85
+                        "type": relation_type,
+                        "raw_type": raw_relation_type,
+                        "confidence": self.default_confidence,
                     })
 
         return results

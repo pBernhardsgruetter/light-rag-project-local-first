@@ -5,12 +5,13 @@ and creates typed RELATES edges with cross-type support. Uses MENTIONS edges
 from Chunk → typed entity tables and HAS_CHUNK from Document → Chunk.
 """
 from datetime import datetime
+import hashlib
 from pathlib import Path
 from typing import List, Dict, Any, Set
 import kuzu
-from sentence_transformers import SentenceTransformer
 from .chunking import TextChunk
 from .ontology import NODE_TABLES, INFRA_TABLES, ENTITY_TYPES, get_table_for_type
+from .quality import normalize_relation_type, resolve_endpoint
 
 
 class KuzuIngestor:
@@ -19,19 +20,19 @@ class KuzuIngestor:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.db = kuzu.Database(str(self.db_path))
         self.conn = kuzu.Connection(self.db)
-        self.embedder = SentenceTransformer(embedding_model)
         self._created_rel_tables: Set[str] = set()
         self._setup_schema()
 
     def _safe_execute(self, query: str, params: dict = None):
-        """Execute a query, silently ignoring 'already exists' errors."""
+        """Execute schema DDL while surfacing real database errors."""
         try:
             if params:
                 self.conn.execute(query, params)
             else:
                 self.conn.execute(query)
-        except Exception:
-            pass
+        except Exception as exc:
+            if "already exists" not in str(exc).casefold():
+                raise RuntimeError(f"Kuzu schema operation failed: {exc}") from exc
 
     def _setup_schema(self):
         """Create all typed node tables, infrastructure tables, and relationship tables."""
@@ -118,49 +119,114 @@ class KuzuIngestor:
                 {"cid": ent["chunk_id"], "eid": eid}
             )
 
-        # ── Relations with fuzzy matching ──
-        ent_name_to_id: Dict[str, str] = {}
+        # ── Relations with evidence-aware endpoint matching ──
+        # Relation models are run per chunk. Restrict endpoint matching to the
+        # same chunk so identical names in different contexts cannot be linked
+        # accidentally.
+        names_by_chunk: Dict[str, List[tuple]] = {}
         ent_id_to_type: Dict[str, str] = {}
 
         for ent in resolved_entities:
             eid = ent["entity_id"]
-            if "original_text" in ent:
-                ent_name_to_id[ent["original_text"].lower()] = eid
-            if "canonical_name" in ent:
-                ent_name_to_id[ent["canonical_name"].lower()] = eid
+            names_by_chunk.setdefault(ent["chunk_id"], []).append(
+                (ent.get("original_text", ""), eid)
+            )
+            names_by_chunk.setdefault(ent["chunk_id"], []).append(
+                (ent.get("canonical_name", ""), eid)
+            )
             ent_id_to_type[eid] = get_table_for_type(ent["type"])
 
         for rel in relations:
-            s_name = rel["source"].lower()
-            t_name = rel["target"].lower()
-
-            sid = ent_name_to_id.get(s_name)
-            tid = ent_name_to_id.get(t_name)
-
-            # Substring fallback
-            if not sid:
-                for k, v in ent_name_to_id.items():
-                    if k in s_name or s_name in k:
-                        sid = v
-                        break
-            if not tid:
-                for k, v in ent_name_to_id.items():
-                    if k in t_name or t_name in k:
-                        tid = v
-                        break
+            chunk_id = rel.get("chunk_id")
+            candidates = names_by_chunk.get(chunk_id, [])
+            sid = resolve_endpoint(rel.get("source", ""), candidates)
+            tid = resolve_endpoint(rel.get("target", ""), candidates)
 
             if sid and tid and sid != tid:
                 src_table = ent_id_to_type.get(sid, "Concept")
                 tgt_table = ent_id_to_type.get(tid, "Concept")
                 rel_table = f"RELATES_{src_table}_{tgt_table}"
-                rel_type = rel.get("type", rel.get("relation", "RELATED_TO")).upper().replace(" ", "_")
+                rel_type, raw_type = normalize_relation_type(
+                    rel.get("type", rel.get("relation", "RELATED_TO")),
+                    ["WORKS_FOR", "WORKS_ON", "LOCATED_IN", "PARTICIPATED_IN",
+                     "DEVELOPED", "IMPACTED", "REGULATES", "USES",
+                     "PARTNERED_WITH", "RELATED_TO"],
+                )
+                confidence = float(rel.get("confidence", 0.7))
 
                 self.conn.execute(
                     f"MATCH (s:{src_table} {{id: $sid}}), (t:{tgt_table} {{id: $tid}}) "
                     f"MERGE (s)-[r:{rel_table} {{type: $type}}]->(t) "
                     f"SET r.confidence = $conf",
-                    {"sid": sid, "tid": tid, "type": rel_type, "conf": float(rel.get("confidence", 0.8))}
+                    {"sid": sid, "tid": tid, "type": rel_type, "conf": confidence}
                 )
+
+                assertion_key = "|".join([
+                    str(doc_id), str(chunk_id or ""), sid, rel_type, tid,
+                ])
+                assertion_id = hashlib.sha256(assertion_key.encode("utf-8")).hexdigest()[:24]
+                self.conn.execute(
+                    """
+                    MERGE (a:RelationAssertion {id: $id})
+                    SET a.source_id = $sid,
+                        a.source_table = $src_table,
+                        a.predicate = $predicate,
+                        a.raw_predicate = $raw_predicate,
+                        a.target_id = $tid,
+                        a.target_table = $tgt_table,
+                        a.confidence = $confidence,
+                        a.chunk_id = $chunk_id,
+                        a.doc_id = $doc_id
+                    """,
+                    {
+                        "id": assertion_id,
+                        "sid": sid,
+                        "src_table": src_table,
+                        "predicate": rel_type,
+                        "raw_predicate": raw_type,
+                        "tid": tid,
+                        "tgt_table": tgt_table,
+                        "confidence": confidence,
+                        "chunk_id": chunk_id or "",
+                        "doc_id": doc_id,
+                    },
+                )
+
+    def get_entity_catalog(self) -> List[Dict[str, str]]:
+        """Return existing entities for cross-document entity resolution."""
+        catalog: List[Dict[str, str]] = []
+        for table in ENTITY_TYPES:
+            result = self.conn.execute(f"MATCH (e:{table}) RETURN e.id, e.name")
+            while result.has_next():
+                row = result.get_next()
+                if row and row[0] and row[1]:
+                    catalog.append({
+                        "entity_id": row[0],
+                        "canonical_name": row[1],
+                        "type": table,
+                    })
+        return catalog
+
+    def delete_document(self, doc_id: str) -> None:
+        """Delete document-owned evidence and chunks before re-ingestion."""
+        try:
+            self.conn.execute(
+                "MATCH (a:RelationAssertion {doc_id: $doc_id}) DETACH DELETE a",
+                {"doc_id": doc_id},
+            )
+        except Exception as exc:
+            if "not exist" not in str(exc).casefold():
+                raise
+
+        # Detaching chunks also removes their MENTIONS and HAS_CHUNK edges.
+        self.conn.execute(
+            "MATCH (c:Chunk {doc_id: $doc_id}) DETACH DELETE c",
+            {"doc_id": doc_id},
+        )
+        self.conn.execute(
+            "MATCH (d:Document {id: $doc_id}) DETACH DELETE d",
+            {"doc_id": doc_id},
+        )
 
     def close(self):
         self.conn = None

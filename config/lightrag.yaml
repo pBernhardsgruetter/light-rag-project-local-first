@@ -1,23 +1,24 @@
 working_dir: "/workspace"
 db_path: "/database/db"
 
+# The runtime is the custom Kuzu-backed GraphRAG service in server.py. These
+# settings are kept in one config file so Docker and local execution agree.
+retrieval_backend: "typed-kuzu"
+retrieval_embedding_model: "all-MiniLM-L6-v2"
+retrieve_mode: "hybrid"
+top_k: 30
+
 llm_binding: "openrouter"
 llm_model: "nvidia/nemotron-3-ultra-550b-a55b:free"
 llm_temperature: 0.1
 llm_max_tokens: 4096
 
-embedding_binding: "ollama"
-embedding_model: "bge-m3"
-embedding_host: "http://ollama:11434"
-embedding_dim: 1024
+embedding_binding: "sentence-transformers"
+embedding_model: "all-MiniLM-L6-v2"
 max_token_size: 8192
 
-graph_storage: "KuzuStorage"
-vector_storage: "NanoVectorDBStorage"
-kv_storage: "JsonKVStorage"
-
-retrieve_mode: "hybrid"
-top_k: 30
+graph_storage: "typed-kuzu"
+vector_storage: "in-process-dense-plus-lexical"
 max_token_for_text_unit: 4000
 max_token_for_global_context: 8000
 max_token_for_local_context: 8000

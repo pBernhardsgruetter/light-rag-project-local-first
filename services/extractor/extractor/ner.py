@@ -11,10 +11,17 @@ from gliner import GLiNER
 from .chunking import TextChunk
 
 class EntityExtractor:
-    def __init__(self, model_name: str, entity_types: List[str], batch_size: int = 32):
+    def __init__(
+        self,
+        model_name: str,
+        entity_types: List[str],
+        batch_size: int = 32,
+        score_threshold: float = 0.35,
+    ):
         self.model_name = model_name
         self.entity_types = entity_types
         self.batch_size = batch_size
+        self.score_threshold = score_threshold
         self._model = None
 
     def _load_model(self):
@@ -23,12 +30,14 @@ class EntityExtractor:
 
     def extract_entities(self, chunks: List[TextChunk]) -> List[Dict[str, Any]]:
         self._load_model()
-        texts = [c.text for c in chunks]
         extracted: List[Dict[str, Any]] = []
 
         for chunk in chunks:
             preds = self._model.predict_entities(chunk.text, labels=self.entity_types)
             for p in preds:
+                score = float(p.get("score", 1.0))
+                if score < self.score_threshold:
+                    continue
                 extracted.append({
                     "chunk_id": chunk.id,
                     "doc_id": chunk.doc_id,
@@ -36,7 +45,7 @@ class EntityExtractor:
                     "label": p["label"],
                     "start": p["start"],
                     "end": p["end"],
-                    "score": float(p.get("score", 1.0))
+                    "score": score
                 })
 
         return extracted

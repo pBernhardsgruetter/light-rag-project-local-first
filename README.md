@@ -1,4 +1,4 @@
-# GraphRAG System mit LightRAG & KuzuDB
+# GraphRAG System mit KuzuDB
 
 Autonomes GraphRAG-System für Wissensgraphen-Konstruktion, Dual-Level Retrieval und kontinuierliche Qualitätsvalidierung.
 
@@ -56,7 +56,7 @@ curl -X POST http://localhost:9621/query \
 ### 5. Migration auf lokales LLM (ThinkingCap)
 Sobald Ihre lokale GPU-Infrastruktur bereitsteht:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d lightrag ollama
+docker compose -f docker-compose.yml -f docker-compose.local-ollama.yml up -d lightrag ollama
 ```
 
 ## 📄 Lizenz

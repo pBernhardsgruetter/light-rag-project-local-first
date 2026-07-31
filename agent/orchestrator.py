@@ -41,13 +41,17 @@ class GraphRAGOrchestrator:
             print(f"==========================================")
 
             report = await self.check_validation_report()
-            avg_score = report.get("avg_score", 0.0)
+            avg_score = report.get("avg_score")
             status = report.get("status", "FAIL")
 
             print(f"Current Validation Status: {status} (Score: {avg_score})")
 
-            if avg_score >= self.target_score:
+            if isinstance(avg_score, (int, float)) and avg_score >= self.target_score:
                 print("SUCCESS: Target retrieval score achieved! System optimized.")
+                break
+
+            if status == "NO_JUDGE":
+                print("Validation cannot pass without a configured judge model.")
                 break
 
             print("Retrieval score below target. Analyzing bottlenecks and applying auto-fixes...")

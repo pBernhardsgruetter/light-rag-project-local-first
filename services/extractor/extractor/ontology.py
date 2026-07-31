@@ -80,6 +80,19 @@ INFRA_TABLES: Dict[str, str] = {
             start_idx INT64, end_idx INT64, PRIMARY KEY(id)
         )
     """,
+    # Relation assertions make provenance first-class without forcing a
+    # migration of the original typed relationship tables. Each assertion is
+    # tied to the chunk that produced it and can be independently deleted or
+    # displayed as evidence.
+    "RelationAssertion": """
+        CREATE NODE TABLE IF NOT EXISTS RelationAssertion(
+            id STRING, source_id STRING, source_table STRING,
+            predicate STRING, raw_predicate STRING,
+            target_id STRING, target_table STRING,
+            confidence DOUBLE, chunk_id STRING, doc_id STRING,
+            PRIMARY KEY(id)
+        )
+    """,
 }
 
 # ─────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 import yaml
@@ -26,20 +27,38 @@ class CheckpointManager:
         if self.checkpoint_file.exists():
             try:
                 data = json.loads(self.checkpoint_file.read_text(encoding="utf-8"))
-                return set(data.get("processed", []))
+                # Migrate the old path-only checkpoint format. Entries without
+                # a fingerprint are intentionally reprocessed once.
+                if isinstance(data.get("processed"), list):
+                    return {
+                        str(path): {"fingerprint": None}
+                        for path in data.get("processed", [])
+                    }
+                return data.get("processed", {})
             except Exception:
-                return set()
-        return set()
+                return {}
+        return {}
 
-    def mark_processed(self, file_path: Path):
-        self.processed.add(str(file_path.resolve()))
+    def mark_processed(self, file_path: Path, fingerprint: str):
+        self.processed[str(file_path.resolve())] = {
+            "fingerprint": fingerprint,
+        }
         self.checkpoint_file.write_text(
-            json.dumps({"processed": list(self.processed)}, indent=2),
+            json.dumps({"processed": self.processed}, indent=2),
             encoding="utf-8"
         )
 
-    def is_processed(self, file_path: Path) -> bool:
-        return str(file_path.resolve()) in self.processed
+    def is_processed(self, file_path: Path, fingerprint: str) -> bool:
+        entry = self.processed.get(str(file_path.resolve()))
+        return bool(entry and entry.get("fingerprint") == fingerprint)
+
+
+def fingerprint_file(file_path: Path) -> str:
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 async def run_pipeline(config_path: Path):
     with open(config_path, "r", encoding="utf-8") as f:
@@ -58,11 +77,14 @@ async def run_pipeline(config_path: Path):
     ner = EntityExtractor(
         model_name=cfg["gliner_model"],
         entity_types=cfg["entity_types"],
-        batch_size=cfg.get("batch_size", 32)
+        batch_size=cfg.get("batch_size", 32),
+        score_threshold=cfg.get("entity_score_threshold", 0.35),
     )
     re_extractor = RelationExtractor(
         model_name=cfg["rebel_model"],
-        batch_size=cfg.get("batch_size", 32)
+        batch_size=cfg.get("batch_size", 32),
+        allowed_relation_types=cfg.get("relation_types", []),
+        default_confidence=cfg.get("relation_default_confidence", 0.70),
     )
     resolver = EntityResolver(
         embedding_model=cfg["embedding_model"],
@@ -78,24 +100,30 @@ async def run_pipeline(config_path: Path):
         return
 
     for doc_path in files:
-        if checkpoint.is_processed(doc_path):
+        fingerprint = fingerprint_file(doc_path)
+        if checkpoint.is_processed(doc_path, fingerprint):
             print(f"Skipping already processed file: {doc_path}")
             continue
 
         print(f"Processing document: {doc_path}")
         chunks = chunker.chunk_document(doc_path)
         if not chunks:
-            checkpoint.mark_processed(doc_path)
+            checkpoint.mark_processed(doc_path, fingerprint)
             continue
 
         entities = ner.extract_entities(chunks)
         relations = re_extractor.extract_relations(chunks)
-        resolved = await resolver.resolve_entities(entities)
-
         ingestor = KuzuIngestor(db_path=kuzu_path, embedding_model=cfg["embedding_model"])
-        ingestor.ingest_document(doc_path, chunks, resolved, relations)
-        ingestor.close()
-        checkpoint.mark_processed(doc_path)
+        try:
+            existing_entities = ingestor.get_entity_catalog()
+            resolved = await resolver.resolve_entities(entities, existing_entities)
+            # Re-ingesting the same path is safe: old chunks and relation
+            # assertions are removed before the new version is written.
+            ingestor.delete_document(chunks[0].doc_id)
+            ingestor.ingest_document(doc_path, chunks, resolved, relations)
+        finally:
+            ingestor.close()
+        checkpoint.mark_processed(doc_path, fingerprint)
         print(f"Successfully ingested {doc_path}: {len(chunks)} chunks, {len(resolved)} entities, {len(relations)} relations.")
 
 def main():

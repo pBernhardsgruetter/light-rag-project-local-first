@@ -33,11 +33,8 @@ services:
       - LLM_BINDING=openrouter
       - LLM_MODEL=${OPENROUTER_MODEL:-nvidia/nemotron-3-ultra-550b-a55b:free}
       - LLM_API_KEY=${OPENROUTER_API_KEY}
-      - EMBEDDING_BINDING=ollama
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
-      - EMBEDDING_HOST=${OLLAMA_HOST:-http://ollama:11434}
-      - GRAPH_STORAGE=KuzuStorage
-      - VECTOR_STORAGE=NanoVectorDBStorage
+      - RETRIEVAL_EMBEDDING_MODEL=${RETRIEVAL_EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - DB_PATH=/database/db
     volumes:
       - ./data/lightrag:/workspace
       - ./data/kuzu:/database
