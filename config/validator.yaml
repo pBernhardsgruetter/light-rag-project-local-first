@@ -1,0 +1,7 @@
+lightrag_endpoint: "http://lightrag:9621"
+test_dataset: "/data/test_qa.jsonl"
+report_output: "/output/validation_report.json"
+target_score: 0.75
+
+judge_model: "nvidia/nemotron-3-ultra-550b-a55b:free"
+judge_temperature: 0.0

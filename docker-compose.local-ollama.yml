@@ -1,0 +1,18 @@
+services:
+  lightrag:
+    environment:
+      - LLM_BINDING=ollama
+      - LLM_MODEL=thinkingcap-qwen3.6-27b:q4_k_m
+      - LLM_HOST=http://ollama:11434
+      - LLM_TEMPERATURE=0.1
+      - LLM_MAX_TOKENS=8192
+
+  ollama:
+    entrypoint: >
+      /bin/sh -c "
+        ollama serve &
+        sleep 5 &&
+        ollama pull bge-m3 &&
+        ollama pull hf.co/bartowski/ThinkingCap-Qwen3.6-27B-GGUF:Q4_K_M &&
+        wait
+      "

@@ -1,0 +1,84 @@
+services:
+  # ─────────────────────────────────────────────────────────────
+  # EXTRACTOR SERVICE (GPU) - Batch Entity & Relation Extraction
+  # ─────────────────────────────────────────────────────────────
+  extractor:
+    build:
+      context: ./services/extractor
+      dockerfile: Dockerfile.gpu
+    environment:
+      - BATCH_SIZE=${BATCH_SIZE:-32}
+      - GLINER_MODEL=urchade/gliner_large-v2.1
+      - REBEL_MODEL=Babelscape/rebel-large
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-nvidia/nemotron-3-ultra-550b-a55b:free}
+    volumes:
+      - ./data:/data
+      - ./models:/models
+      - ./output:/output
+      - ./config:/config
+      - ./services/extractor/extractor:/app/extractor
+    command: --config /config/extractor.yaml
+
+  # ─────────────────────────────────────────────────────────────
+  # LIGHTRAG SERVICE (Retrieval + Dual-Level Reasoning)
+  # ─────────────────────────────────────────────────────────────
+  lightrag:
+    build:
+      context: ./services/lightrag
+      dockerfile: Dockerfile
+    environment:
+      - WORKING_DIR=/workspace
+      - LLM_BINDING=openrouter
+      - LLM_MODEL=${OPENROUTER_MODEL:-nvidia/nemotron-3-ultra-550b-a55b:free}
+      - LLM_API_KEY=${OPENROUTER_API_KEY}
+      - EMBEDDING_BINDING=ollama
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
+      - EMBEDDING_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - GRAPH_STORAGE=KuzuStorage
+      - VECTOR_STORAGE=NanoVectorDBStorage
+    volumes:
+      - ./data/lightrag:/workspace
+      - ./data/kuzu:/database
+      - ./services/lightrag:/app
+    ports:
+      - "9621:9621"
+    depends_on:
+      - ollama
+
+  # ─────────────────────────────────────────────────────────────
+  # OLLAMA (Local Embeddings & Future Local LLM)
+  # ─────────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ./data/ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+    entrypoint: >
+      /bin/sh -c "
+        ollama serve &
+        sleep 5 &&
+        ollama pull bge-m3 &&
+        wait
+      "
+
+  # ─────────────────────────────────────────────────────────────
+  # VALIDATOR (Continuous QA & Retrieval Evaluation)
+  # ─────────────────────────────────────────────────────────────
+  validator:
+    build:
+      context: ./services/validator
+      dockerfile: Dockerfile
+    environment:
+      - LIGHTRAG_ENDPOINT=http://lightrag:9621
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - TEST_DATASET=/data/test_qa.jsonl
+    volumes:
+      - ./data:/data
+      - ./tests:/tests
+      - ./config:/config
+    depends_on:
+      - lightrag
+    command: python -m validator.run --config /config/validator.yaml --continuous --interval 60

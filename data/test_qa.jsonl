@@ -1,0 +1,4 @@
+{"question": "Welche Entities vom Typ 'Person' werden im Dokument 'report_2024.pdf' erwähnt?", "expected": "Liste von Personen mit Quelle", "type": "entity_lookup", "metadata_filter": {"source": "report_2024.pdf", "entity_type": "Person"}}
+{"question": "Wie hängen 'EV-Adoption' und 'Luftqualität' zusammen?", "expected": "Kausale Kette: EV -> weniger Emissionen -> bessere Luftqualität", "type": "multi_hop_reasoning"}
+{"question": "Welche Organisationen arbeiten an 'Batterietechnologie'?", "expected": "Organisationen mit Relation zu Batterietechnologie", "type": "relation_query", "metadata_filter": {"relation_type": "WORKS_ON"}}
+{"question": "Zusammenfassung aller Dokumente aus Q1 2024 zum Thema 'Regulierung'", "expected": "Thematische Zusammenfassung mit Quellen", "type": "global_summary", "metadata_filter": {"category": "Regulierung"}}

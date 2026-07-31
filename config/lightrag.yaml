@@ -1,0 +1,25 @@
+working_dir: "/workspace"
+db_path: "/database/db"
+
+llm_binding: "openrouter"
+llm_model: "nvidia/nemotron-3-ultra-550b-a55b:free"
+llm_temperature: 0.1
+llm_max_tokens: 4096
+
+embedding_binding: "ollama"
+embedding_model: "bge-m3"
+embedding_host: "http://ollama:11434"
+embedding_dim: 1024
+max_token_size: 8192
+
+graph_storage: "KuzuStorage"
+vector_storage: "NanoVectorDBStorage"
+kv_storage: "JsonKVStorage"
+
+retrieve_mode: "hybrid"
+top_k: 30
+max_token_for_text_unit: 4000
+max_token_for_global_context: 8000
+max_token_for_local_context: 8000
+
+enable_incremental: true

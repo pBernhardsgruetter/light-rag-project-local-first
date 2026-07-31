@@ -1,0 +1,12 @@
+torch>=2.6.0
+transformers>=4.40.0,<4.49.0
+gliner>=0.1.10
+sentence-transformers>=3.0.0
+faiss-cpu>=1.8.0
+kuzu>=0.4.0
+pyyaml>=6.0
+openai>=1.30.0
+numpy>=1.26.0
+pydantic>=2.7.0
+pypdf>=4.0.0
+

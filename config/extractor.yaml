@@ -1,0 +1,38 @@
+input_dir: "/data/input"
+output_dir: "/output"
+kuzu_path: "/data/kuzu/db"
+checkpoint_file: "/output/extractor_checkpoint.json"
+
+batch_size: 32
+chunk_size: 1000
+chunk_overlap: 200
+
+gliner_model: "urchade/gliner_large-v2.1"
+rebel_model: "Babelscape/rebel-large"
+embedding_model: "all-MiniLM-L6-v2"
+
+openrouter_model: "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+entity_types:
+  - "Person"
+  - "Organization"
+  - "Location"
+  - "Event"
+  - "Concept"
+  - "Technology"
+  - "Product"
+  - "Regulation"
+
+relation_types:
+  - "WORKS_FOR"
+  - "LOCATED_IN"
+  - "PARTICIPATED_IN"
+  - "DEVELOPED"
+  - "IMPACTED"
+  - "REGULATES"
+  - "USES"
+  - "PARTNERED_WITH"
+
+resolution:
+  similarity_threshold: 0.85
+  verify_with_llm: false
